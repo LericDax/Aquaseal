@@ -2,13 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Aquaseal Watermark Applicator</title>
+    <title>Aquaseal Watermark Applicator (Now With Batch Processing!)</title>
     <!-- React (Production UMD) -->
     <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
     <!-- ReactDOM (Production UMD) -->
     <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
     <!-- Babel Standalone for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- JSZip for ZIP file generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
     <style>
       body {
         font-family: sans-serif;
@@ -33,7 +35,7 @@
         margin-top: 1rem;
         cursor: pointer;
       }
-      .output {
+      p {
         margin-top: 1rem;
       }
       .image-preview {
@@ -47,26 +49,36 @@
     <script type="text/babel">
       const { useState, useRef } = React;
       
-      function WatermarkApp() {
-        const [bgImageURL, setBgImageURL] = useState(null);
+      // Helper: Read a file as a data URL.
+      function readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+      
+      function AquasealBatchWatermarkApp() {
+        const [bgFiles, setBgFiles] = useState([]);
         const [watermarkURL, setWatermarkURL] = useState(null);
         const [position, setPosition] = useState("bottom-right");
-        const [ratio, setRatio] = useState("20"); // default ratio (20%)
-        const [resultURL, setResultURL] = useState(null);
+        const [ratio, setRatio] = useState("20"); // as percentage
+        const [transparency, setTransparency] = useState("50"); // default 50% transparency
+        const [progress, setProgress] = useState(0);
+        const [resultDownloadUrl, setResultDownloadUrl] = useState(null);
+        const [isZip, setIsZip] = useState(false);
         const canvasRef = useRef(null);
         
-        // Handle background image file upload
-        const handleBgImageUpload = (e) => {
-          const file = e.target.files[0];
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = (ev) => setBgImageURL(ev.target.result);
-            reader.readAsDataURL(file);
-          }
+        // Handle background images file selection (multiple)
+        const handleBgFilesChange = (e) => {
+          setBgFiles(Array.from(e.target.files));
+          setProgress(0);
+          setResultDownloadUrl(null);
         };
         
-        // Handle watermark image file upload
-        const handleWatermarkUpload = (e) => {
+        // Handle watermark image file selection
+        const handleWatermarkChange = (e) => {
           const file = e.target.files[0];
           if (file) {
             const reader = new FileReader();
@@ -75,36 +87,127 @@
           }
         };
         
-        // Composite the images on a canvas and generate a data URL
-        const generateWatermarkedImage = () => {
-          if (!bgImageURL || !watermarkURL) {
-            alert("Please upload both background and watermark images.");
+        // Process a single image and return its download URL.
+        const processSingleImage = async (file) => {
+          const bgDataURL = await readFileAsDataURL(file);
+          const bgImg = new Image();
+          bgImg.src = bgDataURL;
+          await new Promise((resolve) => {
+            bgImg.onload = resolve;
+            bgImg.onerror = resolve;
+          });
+          const canvas = canvasRef.current;
+          canvas.width = bgImg.naturalWidth;
+          canvas.height = bgImg.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          
+          // Draw the background image.
+          ctx.drawImage(bgImg, 0, 0);
+          
+          // Load the watermark image.
+          const wmImg = new Image();
+          wmImg.src = watermarkURL;
+          await new Promise((resolve) => {
+            wmImg.onload = resolve;
+            wmImg.onerror = resolve;
+          });
+          
+          // Determine watermark size.
+          const ratioPercent = Number(ratio) / 100;
+          const wmWidth = bgImg.naturalWidth * ratioPercent;
+          const aspectRatio = wmImg.naturalHeight / wmImg.naturalWidth;
+          const wmHeight = wmWidth * aspectRatio;
+          
+          // Calculate watermark coordinates.
+          let x = 0, y = 0;
+          switch (position) {
+            case "top-left":
+              x = 0;
+              y = 0;
+              break;
+            case "top-right":
+              x = bgImg.naturalWidth - wmWidth;
+              y = 0;
+              break;
+            case "bottom-left":
+              x = 0;
+              y = bgImg.naturalHeight - wmHeight;
+              break;
+            case "bottom-right":
+              x = bgImg.naturalWidth - wmWidth;
+              y = bgImg.naturalHeight - wmHeight;
+              break;
+            case "center":
+              x = (bgImg.naturalWidth - wmWidth) / 2;
+              y = (bgImg.naturalHeight - wmHeight) / 2;
+              break;
+            default:
+              break;
+          }
+          
+          // Compute opacity from transparency selection.
+          const alpha = 1 - (Number(transparency) / 100);
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(wmImg, x, y, wmWidth, wmHeight);
+          ctx.globalAlpha = 1.0;
+          
+          // Convert canvas content to a blob and generate a URL.
+          const blob = await new Promise((resolve) =>
+            canvas.toBlob(resolve, "image/png")
+          );
+          return URL.createObjectURL(blob);
+        };
+        
+        // Main processing function.
+        const processBatch = async () => {
+          if (!watermarkURL) {
+            alert("Please upload a watermark image.");
+            return;
+          }
+          if (bgFiles.length === 0) {
+            alert("Please upload at least one background image.");
             return;
           }
           
-          const bgImg = new Image();
-          const wmImg = new Image();
-          bgImg.src = bgImageURL;
-          wmImg.src = watermarkURL;
+          setProgress(0);
           
-          bgImg.onload = () => {
-            // Set canvas dimensions to background image dimensions
-            const canvas = canvasRef.current;
-            canvas.width = bgImg.naturalWidth;
-            canvas.height = bgImg.naturalHeight;
-            const ctx = canvas.getContext("2d");
-            
-            // Draw the background image first
-            ctx.drawImage(bgImg, 0, 0);
-            
-            wmImg.onload = () => {
-              // Determine watermark size based on the selected ratio (percentage of background width)
+          // If only one image, process without zipping.
+          if (bgFiles.length === 1) {
+            const url = await processSingleImage(bgFiles[0]);
+            setResultDownloadUrl(url);
+            setIsZip(false);
+            setProgress(1);
+          } else {
+            setIsZip(true);
+            const zip = new JSZip();
+            // Preload the watermark image.
+            const wmImg = new Image();
+            wmImg.src = watermarkURL;
+            await new Promise((resolve) => {
+              wmImg.onload = resolve;
+              wmImg.onerror = resolve;
+            });
+            // Process each image sequentially.
+            for (let i = 0; i < bgFiles.length; i++) {
+              const file = bgFiles[i];
+              const bgDataURL = await readFileAsDataURL(file);
+              const bgImg = new Image();
+              bgImg.src = bgDataURL;
+              await new Promise((resolve) => {
+                bgImg.onload = resolve;
+                bgImg.onerror = resolve;
+              });
+              const canvas = canvasRef.current;
+              canvas.width = bgImg.naturalWidth;
+              canvas.height = bgImg.naturalHeight;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(bgImg, 0, 0);
+              
               const ratioPercent = Number(ratio) / 100;
               const wmWidth = bgImg.naturalWidth * ratioPercent;
               const aspectRatio = wmImg.naturalHeight / wmImg.naturalWidth;
               const wmHeight = wmWidth * aspectRatio;
               
-              // Calculate x,y coordinates based on the selected position
               let x = 0, y = 0;
               switch (position) {
                 case "top-left":
@@ -131,37 +234,43 @@
                   break;
               }
               
-              // Optionally adjust transparency (here set to 50% opacity)
-              ctx.globalAlpha = 0.5;
+              const alpha = 1 - (Number(transparency) / 100);
+              ctx.globalAlpha = alpha;
               ctx.drawImage(wmImg, x, y, wmWidth, wmHeight);
-              ctx.globalAlpha = 1.0; // reset opacity
+              ctx.globalAlpha = 1.0;
               
-              // Convert canvas content to a data URL and display it
-              setResultURL(canvas.toDataURL("image/png"));
-            };
-            
-            // If the watermark image is already loaded, trigger the onload callback immediately
-            if (wmImg.complete) {
-              wmImg.onload();
+              const blob = await new Promise((resolve) =>
+                canvas.toBlob(resolve, "image/png")
+              );
+              zip.file(`watermarked_${i + 1}.png`, blob);
+              setProgress(i + 1);
             }
-          };
-          
-          // If the background image is already loaded, trigger the onload callback immediately
-          if (bgImg.complete) {
-            bgImg.onload();
+            zip.generateAsync({ type: "blob" }).then((content) => {
+              const url = URL.createObjectURL(content);
+              setResultDownloadUrl(url);
+            });
           }
         };
         
         return (
           <div className="container">
-            <h2>Aquaseal Watermark Applicator</h2>
+            <h2>Aquaseal Watermark Applicator (Now With Batch Processing!)</h2>
             <div>
-              <label className="field-label">Upload Background Image:</label>
-              <input type="file" accept="image/*" onChange={handleBgImageUpload} />
+              <label className="field-label">Upload Background Images:</label>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleBgFilesChange}
+              />
             </div>
             <div>
               <label className="field-label">Upload Watermark Image:</label>
-              <input type="file" accept="image/*" onChange={handleWatermarkUpload} />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleWatermarkChange}
+              />
             </div>
             <div>
               <label className="field-label">Select Watermark Position:</label>
@@ -185,26 +294,68 @@
                 <option value="50">50%</option>
               </select>
             </div>
-            <button className="btn" onClick={generateWatermarkedImage}>
-              Generate Watermarked Image
+            <div>
+              <label className="field-label">
+                Select Watermark Transparency (0% = opaque, 90% = almost invisible):
+              </label>
+              <select value={transparency} onChange={(e) => setTransparency(e.target.value)}>
+                <option value="0">0%</option>
+                <option value="10">10%</option>
+                <option value="20">20%</option>
+                <option value="30">30%</option>
+                <option value="40">40%</option>
+                <option value="50">50%</option>
+                <option value="60">60%</option>
+                <option value="70">70%</option>
+                <option value="80">80%</option>
+                <option value="90">90%</option>
+              </select>
+            </div>
+            <button className="btn" onClick={processBatch}>
+              Generate Watermarked Images
             </button>
-            <canvas ref={canvasRef} style={{ display: "none" }}></canvas>
-            {resultURL && (
-              <div className="output">
-                <h3>Result:</h3>
-                <img src={resultURL} alt="Watermarked" className="image-preview" />
-                <br />
-                <a href={resultURL} download="watermarked.png" className="btn">
-                  Download Image
-                </a>
+            {progress > 0 && (
+              <p>
+                Processed {progress} of {bgFiles.length} images.
+              </p>
+            )}
+            {resultDownloadUrl && (
+              <div>
+                {!isZip ? (
+                  <div>
+                    <a
+                      href={resultDownloadUrl}
+                      download="watermarked.png"
+                      className="btn"
+                    >
+                      Download Image
+                    </a>
+                    <br />
+                    <img
+                      src={resultDownloadUrl}
+                      alt="Watermarked"
+                      className="image-preview"
+                    />
+                  </div>
+                ) : (
+                  <a
+                    href={resultDownloadUrl}
+                    download="watermarked_images.zip"
+                    className="btn"
+                  >
+                    Download ZIP
+                  </a>
+                )}
               </div>
             )}
+            {/* Hidden canvas for processing */}
+            <canvas ref={canvasRef} style={{ display: "none" }}></canvas>
           </div>
         );
       }
       
       function App() {
-        return <WatermarkApp />;
+        return <AquasealBatchWatermarkApp />;
       }
       
       ReactDOM.render(<App />, document.getElementById("root"));
