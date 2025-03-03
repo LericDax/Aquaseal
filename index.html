@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Watermark Image Generator</title>
+    <!-- React (Production UMD) -->
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <!-- ReactDOM (Production UMD) -->
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <!-- Babel Standalone for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 1rem;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1rem;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      .field-label {
+        display: block;
+        margin-top: 1rem;
+        font-weight: bold;
+      }
+      .btn {
+        background: #e0e0e0;
+        border: 1px solid #aaa;
+        padding: 0.3rem 0.6rem;
+        margin-top: 1rem;
+        cursor: pointer;
+      }
+      .output {
+        margin-top: 1rem;
+      }
+      .image-preview {
+        max-width: 100%;
+        margin-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      const { useState, useRef } = React;
+      
+      function WatermarkApp() {
+        const [bgImageURL, setBgImageURL] = useState(null);
+        const [watermarkURL, setWatermarkURL] = useState(null);
+        const [position, setPosition] = useState("bottom-right");
+        const [ratio, setRatio] = useState("20"); // default ratio (20%)
+        const [resultURL, setResultURL] = useState(null);
+        const canvasRef = useRef(null);
+        
+        // Handle background image file upload
+        const handleBgImageUpload = (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (ev) => setBgImageURL(ev.target.result);
+            reader.readAsDataURL(file);
+          }
+        };
+        
+        // Handle watermark image file upload
+        const handleWatermarkUpload = (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (ev) => setWatermarkURL(ev.target.result);
+            reader.readAsDataURL(file);
+          }
+        };
+        
+        // Composite the images on a canvas and generate a data URL
+        const generateWatermarkedImage = () => {
+          if (!bgImageURL || !watermarkURL) {
+            alert("Please upload both background and watermark images.");
+            return;
+          }
+          
+          const bgImg = new Image();
+          const wmImg = new Image();
+          bgImg.src = bgImageURL;
+          wmImg.src = watermarkURL;
+          
+          bgImg.onload = () => {
+            // Set canvas dimensions to background image dimensions
+            const canvas = canvasRef.current;
+            canvas.width = bgImg.naturalWidth;
+            canvas.height = bgImg.naturalHeight;
+            const ctx = canvas.getContext("2d");
+            
+            // Draw the background image first
+            ctx.drawImage(bgImg, 0, 0);
+            
+            wmImg.onload = () => {
+              // Determine watermark size based on the selected ratio (percentage of background width)
+              const ratioPercent = Number(ratio) / 100;
+              const wmWidth = bgImg.naturalWidth * ratioPercent;
+              const aspectRatio = wmImg.naturalHeight / wmImg.naturalWidth;
+              const wmHeight = wmWidth * aspectRatio;
+              
+              // Calculate x,y coordinates based on the selected position
+              let x = 0, y = 0;
+              switch (position) {
+                case "top-left":
+                  x = 0;
+                  y = 0;
+                  break;
+                case "top-right":
+                  x = bgImg.naturalWidth - wmWidth;
+                  y = 0;
+                  break;
+                case "bottom-left":
+                  x = 0;
+                  y = bgImg.naturalHeight - wmHeight;
+                  break;
+                case "bottom-right":
+                  x = bgImg.naturalWidth - wmWidth;
+                  y = bgImg.naturalHeight - wmHeight;
+                  break;
+                case "center":
+                  x = (bgImg.naturalWidth - wmWidth) / 2;
+                  y = (bgImg.naturalHeight - wmHeight) / 2;
+                  break;
+                default:
+                  break;
+              }
+              
+              // Optionally adjust transparency (here set to 50% opacity)
+              ctx.globalAlpha = 0.5;
+              ctx.drawImage(wmImg, x, y, wmWidth, wmHeight);
+              ctx.globalAlpha = 1.0; // reset opacity
+              
+              // Convert canvas content to a data URL and display it
+              setResultURL(canvas.toDataURL("image/png"));
+            };
+            
+            // If the watermark image is already loaded, trigger the onload callback immediately
+            if (wmImg.complete) {
+              wmImg.onload();
+            }
+          };
+          
+          // If the background image is already loaded, trigger the onload callback immediately
+          if (bgImg.complete) {
+            bgImg.onload();
+          }
+        };
+        
+        return (
+          <div className="container">
+            <h2>Watermark Image Generator</h2>
+            <div>
+              <label className="field-label">Upload Background Image:</label>
+              <input type="file" accept="image/*" onChange={handleBgImageUpload} />
+            </div>
+            <div>
+              <label className="field-label">Upload Watermark Image:</label>
+              <input type="file" accept="image/*" onChange={handleWatermarkUpload} />
+            </div>
+            <div>
+              <label className="field-label">Select Watermark Position:</label>
+              <select value={position} onChange={(e) => setPosition(e.target.value)}>
+                <option value="top-left">Top Left</option>
+                <option value="top-right">Top Right</option>
+                <option value="bottom-left">Bottom Left</option>
+                <option value="bottom-right">Bottom Right</option>
+                <option value="center">Center</option>
+              </select>
+            </div>
+            <div>
+              <label className="field-label">
+                Select Watermark Size (as % of background width):
+              </label>
+              <select value={ratio} onChange={(e) => setRatio(e.target.value)}>
+                <option value="10">10%</option>
+                <option value="20">20%</option>
+                <option value="30">30%</option>
+                <option value="40">40%</option>
+                <option value="50">50%</option>
+              </select>
+            </div>
+            <button className="btn" onClick={generateWatermarkedImage}>
+              Generate Watermarked Image
+            </button>
+            <canvas ref={canvasRef} style={{ display: "none" }}></canvas>
+            {resultURL && (
+              <div className="output">
+                <h3>Result:</h3>
+                <img src={resultURL} alt="Watermarked" className="image-preview" />
+                <br />
+                <a href={resultURL} download="watermarked.png" className="btn">
+                  Download Image
+                </a>
+              </div>
+            )}
+          </div>
+        );
+      }
+      
+      function App() {
+        return <WatermarkApp />;
+      }
+      
+      ReactDOM.render(<App />, document.getElementById("root"));
+    </script>
+  </body>
+</html>
